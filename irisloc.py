@@ -1,12 +1,15 @@
 import cv2
 import os
+import imageio
 import numpy as np
+import pandas as pd
 from time import time
 
 from scipy.signal import find_peaks
 
 def find_iris(source: cv2.Mat, center: tuple, 
               mode: str = 'iris',
+              angles = list(range(128)),
               adjust_BRI_CONTR: bool = True, 
               adjust_BLUR: bool = True, 
               calc_time: bool = False):
@@ -36,14 +39,15 @@ def find_iris(source: cv2.Mat, center: tuple,
     if adjust_BLUR:
         polar = cv2.blur(polar, (3,3))
     
-    # angles = [0, 8, 16, 47, 55, 63, 67, 77, 113, 123]
-    angles = [0, 8, 16, 24, 39, 47, 55, 63, 67, 77, 113, 123]
     peaks = []
     for ang in angles:
         deriv = np.gradient(polar[ang])
         maximas, _ = find_peaks(deriv)
-        ind_max = np.argpartition(deriv[maximas], -2)[-2:]
-        peaks.append(mode_func(maximas[ind_max]))
+        if len(maximas) > 2:
+            ind_max = np.argpartition(deriv[maximas], -2)[-2:]
+            peaks.append(mode_func(maximas[ind_max]))
+        else:
+            peaks.append(0)
         
     normalized_peaks = []
     for peak in peaks:
@@ -187,3 +191,55 @@ def make_collage(dir_path: str, size: tuple):
                 
             i+=1
     cv2.imwrite("./collage.png", collage)
+    
+def test_with_images_and_csv(images_folder: str, csv_path: str):
+    df = pd.read_csv(csv_path)
+    df.drop(columns=df.columns[-1], inplace=True)
+    df = df[["Time","Lx", "Ly", "Ls", "Rx", "Ry", "Rs", "Pitch"]]
+    df.loc[:,["Lx", "Ly", "Ls", "Rx", "Ry", "Rs"]] = df.loc[:,["Lx", "Ly", "Ls", "Rx", "Ry", "Rs"]].interpolate()
+    df = df[df["Pitch"].notna()].reset_index().drop(columns=["index", "Pitch"])
+    
+    os.makedirs(images_folder.rstrip("/")+"_output", exist_ok=True)
+    i=0
+    for filename in sorted(os.listdir(images_folder), key=lambda x: int(x[x.find("-")+1:x.rfind(".")])):
+            # print(filename.name)
+            image = cv2.imread(images_folder+filename)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            left_image = image[:, :image.shape[1]//2]
+            right_image = image[:, image.shape[1]//2:]
+            
+            left_center = (df.loc[i, "Ly"], df.loc[i, "Lx"])
+            left_radius = np.sqrt(df.loc[i, "Ls"]/np.pi)
+            right_center = (df.loc[i, "Ry"], df.loc[i, "Rx"]-128)
+            right_radius = np.sqrt(df.loc[i, "Rs"]/np.pi)
+            
+            left_iris_c, left_iris_r = find_iris(left_image, left_center, mode='iris', adjust_BLUR=True, adjust_BRI_CONTR=False)
+            left_pupil_c, left_pupil_r = find_iris(left_image, left_center, mode='pupil', adjust_BLUR=True, adjust_BRI_CONTR=False)
+            
+            right_iris_c, right_iris_r = find_iris(right_image, right_center, mode='iris', adjust_BLUR=True, adjust_BRI_CONTR=False)
+            right_pupil_c, right_pupil_r = find_iris(right_image, right_center, mode='pupil', adjust_BLUR=True, adjust_BRI_CONTR=False)
+            
+            
+            
+            left_image = cv2.cvtColor(left_image, cv2.COLOR_GRAY2BGR)
+            right_image = cv2.cvtColor(right_image, cv2.COLOR_GRAY2BGR)
+            
+            cv2.circle(left_image, (round(left_center[1]), round(left_center[0])), round(left_radius), [255,0,0])
+            cv2.circle(left_image, np.round(left_pupil_c).astype(int), round(left_pupil_r), [0,0,255])
+            cv2.circle(left_image, np.round(left_iris_c).astype(int), round(left_iris_r), [0,255,0])
+            
+            cv2.circle(right_image, (round(right_center[1]), round(right_center[0])), round(right_radius), [255,0,0])
+            cv2.circle(right_image, np.round(right_iris_c).astype(int), round(right_iris_r), [0,255,0])
+            cv2.circle(right_image, np.round(right_pupil_c).astype(int), round(right_pupil_r), [0,0,255])
+            
+            output = np.concatenate([left_image, right_image], axis=1)
+            
+            cv2.imwrite(images_folder.rstrip("/")+"_output/out_"+filename, output)
+            
+            i+=1
+            
+def gif_from_images(images_folder, output_path):
+    with imageio.get_writer(output_path, mode='I') as writer:
+        for filename in sorted(os.listdir(images_folder), key=lambda x: int(x[x.find("-")+1:x.rfind(".")])):
+            image = imageio.imread(images_folder+filename)
+            writer.append_data(image)
