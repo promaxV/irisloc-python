@@ -6,13 +6,24 @@ import pandas as pd
 from time import time
 
 from scipy.signal import find_peaks
+from scipy import optimize
 
 def find_iris(source: cv2.Mat, center: tuple, 
               mode: str = 'iris',
-              angles = list(range(128)),
-              adjust_BRI_CONTR: bool = True, 
-              adjust_BLUR: bool = True, 
+              angles = list([*range(0, 16), *range(48, 80), *range(112, 128)]),
+              filtering = "median",
+              sigmaK = 1,
+              fitting_method = "least_squares",
+              adjust_contrast: bool = True,
+              blur_mode: str = "gauss", 
               calc_time: bool = False):
+    
+    def auto_contrast(image):
+        min_v = image.min()
+        max_v = image.max()
+        a = 255/(max_v-min_v)
+        b = 255*(1-max_v/(max_v-min_v))
+        return np.clip(a*image+b, 0, 255)
     
     if mode=='iris':
         mode_func = np.max
@@ -24,24 +35,29 @@ def find_iris(source: cv2.Mat, center: tuple,
     if calc_time:
         start = time()
         
-    # _, threshholded = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    # inpainted = cv2.inpaint(source, threshholded, 2, cv2.INPAINT_TELEA)
-
-    img = source.astype(np.float32)
+    if len(source.shape) == 3:
+        img = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    else:
+        img = source.astype(np.float32)
+    
+    if adjust_contrast:
+        img = auto_contrast(img)
+    
     maxRad = 90.50966799187809
     
     polar = cv2.linearPolar(img, (center[1], center[0]), maxRad, cv2.WARP_FILL_OUTLIERS)
-    
     polar = polar.astype(np.uint8)
-    
-    if adjust_BRI_CONTR:
-        polar = cv2.convertScaleAbs(polar, alpha = 1.5, beta=-127)
-    if adjust_BLUR:
-        polar = cv2.blur(polar, (3,3))
+
+    if blur_mode == "gauss":
+        polar = cv2.GaussianBlur(polar, (3, 3), 0)
+    elif blur_mode == "average":
+        polar = cv2.blur(polar, (3, 3))
     
     peaks = []
+    deriv_sum = np.zeros(128, )
     for ang in angles:
         deriv = np.gradient(polar[ang])
+        deriv_sum += deriv
         maximas, _ = find_peaks(deriv)
         if len(maximas) > 2:
             ind_max = np.argpartition(deriv[maximas], -2)[-2:]
@@ -49,36 +65,73 @@ def find_iris(source: cv2.Mat, center: tuple,
         else:
             peaks.append(0)
         
+    sum_maximas, _ = find_peaks(deriv_sum)
+    ind_max_sum = np.argpartition(deriv_sum[sum_maximas], -2)[-2:]
+    sum_peak = mode_func(sum_maximas[ind_max_sum])*maxRad/128
+
     normalized_peaks = []
     for peak in peaks:
         normalized_peaks.append(peak*maxRad/128)
     normalized_peaks = np.array(normalized_peaks)
     
-    # normalized_peaks = np.vstack([normalized_peaks.max(axis=1), normalized_peaks.min(axis=1)]).T
-        
     angles_rad = np.array(angles)*2*np.pi/128
+    
+    med = np.median(normalized_peaks[normalized_peaks != 0])
+    std = normalized_peaks.std()
     
     xs = np.full((len(angles),), center[0])+np.sin(angles_rad)*normalized_peaks
     ys = np.full((len(angles),), center[1])+np.cos(angles_rad)*normalized_peaks
-    points_iris=np.round(np.vstack([ys, xs]).T).astype(int)
+    points_iris = np.vstack([ys, xs]).T
     
-    med = np.median(normalized_peaks)
-    std = normalized_peaks.std()
-    points_iris = points_iris[np.abs(normalized_peaks-med)<std]
+    if filtering == "median":
+        points_iris = points_iris[np.abs(normalized_peaks - med) < sigmaK*std]
+    elif filtering == "sum_peak":
+        points_iris = points_iris[np.abs(normalized_peaks - sum_peak) < sigmaK*std]
     
-    points_iris = points_iris[points_iris[:,0]>0]
-    points_iris = points_iris[points_iris[:,0]<127]
+    # points_iris = points_iris[normalized_peaks != 0]
+    # points_iris = points_iris[normalized_peaks != 0]
     
-    # cv2.ellipse(image, cv2.fitEllipse(iris_points), color=[0,255,0])
+    points_iris = points_iris[points_iris[:, 0] > 0]
+    points_iris = points_iris[points_iris[:, 1] > 0]
+    points_iris = points_iris[points_iris[:, 0] < 127]
+    points_iris = points_iris[points_iris[:, 1] < 127]
     
-    (xc_i, yc_i), r_i = cv2.minEnclosingCircle(points_iris)
-    center_c = (int (xc_i), int(yc_i))
-    r_i = int(r_i)
+    # points_iris = points_iris[np.sqrt((points_iris[:, 0] - center[0])**2 + (points_iris[:, 1] - center[1])**2) > 10]
+   
+    if len(points_iris)<3:
+        return (0, 0), 0, []
+   
+    if fitting_method == "least_squares":
+        x = points_iris[:, 0]
+        y = points_iris[:, 1]
+        
+        def calc_R(xc, yc):
+            return np.sqrt((x-xc)**2 + (y-yc)**2)
+
+        def f_2(c):
+            Ri = calc_R(*c)
+            return Ri - Ri.mean()
+
+        center_estimate = x.mean(), y.mean()
+        center, _ = optimize.leastsq(f_2, center_estimate)
+
+        xc, yc = center
+        Ri = calc_R(*center)
+        r = Ri.mean()
+        
+    elif fitting_method == "enclosing_circle":
+        (xc, yc), r = cv2.minEnclosingCircle(points_iris.astype(np.float32))
+        
+     # cv2.ellipse(image, cv2.fitEllipse(iris_points), color=[0,255,0])
+    
+    center_c = (round(xc), round(yc))
+    r = round(r)
     
     if calc_time:
         end = time()
         print(end-start, "seconds")
-    return (int (xc_i), int(yc_i)), r_i
+        
+    return center_c, r, points_iris
 
 def find_iris_by_path(path: str, output_path: str, center: tuple, mode: str):
     if mode not in ['iris', 'pupil', 'both']:
