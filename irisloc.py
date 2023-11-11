@@ -39,6 +39,8 @@ def find_iris(source: cv2.Mat, center: tuple,
         img = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY).astype(np.float32)
     else:
         img = source.astype(np.float32)
+        
+    img = cv2.morphologyEx(img, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)))
     
     if adjust_contrast:
         img = auto_contrast(img)
