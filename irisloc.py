@@ -85,6 +85,11 @@ def find_iris(source: cv2.Mat, center: tuple,
     ys = np.full((len(angles),), center[1])+np.cos(angles_rad)*normalized_peaks
     points_iris = np.vstack([ys, xs]).T
     
+    points_iris = points_iris[points_iris[:, 0] > 0]
+    points_iris = points_iris[points_iris[:, 1] > 0]
+    points_iris = points_iris[points_iris[:, 0] < 127]
+    points_iris = points_iris[points_iris[:, 1] < 127]
+    
     if filtering == "median":
         points_iris = points_iris[np.abs(normalized_peaks - med) < sigmaK*std]
     elif filtering == "sum_peak":
@@ -92,12 +97,7 @@ def find_iris(source: cv2.Mat, center: tuple,
     
     # points_iris = points_iris[normalized_peaks != 0]
     # points_iris = points_iris[normalized_peaks != 0]
-    
-    points_iris = points_iris[points_iris[:, 0] > 0]
-    points_iris = points_iris[points_iris[:, 1] > 0]
-    points_iris = points_iris[points_iris[:, 0] < 127]
-    points_iris = points_iris[points_iris[:, 1] < 127]
-    
+
     # points_iris = points_iris[np.sqrt((points_iris[:, 0] - center[0])**2 + (points_iris[:, 1] - center[1])**2) > 10]
    
     if len(points_iris)<3:
@@ -126,8 +126,8 @@ def find_iris(source: cv2.Mat, center: tuple,
         
      # cv2.ellipse(image, cv2.fitEllipse(iris_points), color=[0,255,0])
     
-    center_c = (round(xc), round(yc))
-    r = round(r)
+    center_c = (xc, yc)
+    r = r
     
     if calc_time:
         end = time()
@@ -154,13 +154,12 @@ def find_iris_by_path(path: str, output_path: str, center: tuple, mode: str):
         cv2.circle(image, center_p, r_p, [0,0,255])
     cv2.imwrite(output_path, image)
     
-    match mode:
-        case "iris":
-            return (center_i, r_i)
-        case "pupil":
-            return (center_p, r_p)
-        case "both":
-            return [(center_i, r_i), (center_p, r_p)]
+    if mode == "iris":
+        return (center_i, r_i)
+    elif mode == "pupil":
+        return (center_p, r_p)
+    elif mode == "both":
+        return [(center_i, r_i), (center_p, r_p)]
 
 def find_irises_in_dir(dir_path: str, blur: bool, bri_contr: bool):
     try:
