@@ -85,15 +85,15 @@ def find_iris(source: cv2.Mat, center: tuple,
     ys = np.full((len(angles),), center[1])+np.cos(angles_rad)*normalized_peaks
     points_iris = np.vstack([ys, xs]).T
     
-    points_iris = points_iris[points_iris[:, 0] > 0]
-    points_iris = points_iris[points_iris[:, 1] > 0]
-    points_iris = points_iris[points_iris[:, 0] < 127]
-    points_iris = points_iris[points_iris[:, 1] < 127]
-    
     if filtering == "median":
         points_iris = points_iris[np.abs(normalized_peaks - med) < sigmaK*std]
     elif filtering == "sum_peak":
         points_iris = points_iris[np.abs(normalized_peaks - sum_peak) < sigmaK*std]
+        
+    points_iris = points_iris[points_iris[:, 0] > 0]
+    points_iris = points_iris[points_iris[:, 1] > 0]
+    points_iris = points_iris[points_iris[:, 0] < 127]
+    points_iris = points_iris[points_iris[:, 1] < 127]
     
     # points_iris = points_iris[normalized_peaks != 0]
     # points_iris = points_iris[normalized_peaks != 0]
